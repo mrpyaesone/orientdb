@@ -3017,7 +3017,9 @@ public final class OWOWCache extends OAbstractWriteCache
 
     } finally {
       for (final OPointer containerPointer : containerPointers) {
-        ODirectMemoryAllocator.instance().deallocate(containerPointer);
+        if (containerPointer != null) {
+          ODirectMemoryAllocator.instance().deallocate(containerPointer);
+        }
       }
     }
 

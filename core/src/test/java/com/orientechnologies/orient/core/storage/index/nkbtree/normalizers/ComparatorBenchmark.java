@@ -5,6 +5,9 @@ import com.orientechnologies.common.comparator.OByteArrayComparator;
 import com.orientechnologies.common.comparator.OUnsafeByteArrayComparator;
 import com.orientechnologies.orient.core.index.OCompositeKey;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+
+import java.io.IOException;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import org.junit.Assert;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -31,7 +34,7 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @Warmup(iterations = 1, batchSize = 1)
 @Fork(1)
 public class ComparatorBenchmark {
-  KeyNormalizer keyNormalizer;
+  KeyNormalizers keyNormalizer;
 
   public static void main(String[] args) throws RunnerException {
     final Options opt =
@@ -55,11 +58,15 @@ public class ComparatorBenchmark {
 
   @Setup(Level.Iteration)
   public void setup() {
-    keyNormalizer = new KeyNormalizer();
+    keyNormalizer = new KeyNormalizers(Locale.getDefault(), Collator.NO_DECOMPOSITION);
 
-    negative = getNormalizedKeySingle(-62, OType.INTEGER);
-    zero = getNormalizedKeySingle(0, OType.INTEGER);
-    positive = getNormalizedKeySingle(5, OType.INTEGER);
+    try {
+      negative = getNormalizedKeySingle(-62, OType.INTEGER);
+      zero = getNormalizedKeySingle(0, OType.INTEGER);
+      positive = getNormalizedKeySingle(5, OType.INTEGER);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Benchmark
@@ -92,7 +99,7 @@ public class ComparatorBenchmark {
     arrayComparator.compare(zero, zero);
   }
 
-  private byte[] getNormalizedKeySingle(final int keyValue, final OType type) {
+  private byte[] getNormalizedKeySingle(final int keyValue, final OType type) throws IOException {
     final OCompositeKey compositeKey = new OCompositeKey();
     compositeKey.addKey(keyValue);
     Assert.assertEquals(1, compositeKey.getKeys().size());
@@ -100,6 +107,6 @@ public class ComparatorBenchmark {
     final OType[] types = new OType[1];
     types[0] = type;
 
-    return keyNormalizer.normalize(compositeKey, types, Collator.NO_DECOMPOSITION);
+    return keyNormalizer.normalize(compositeKey, types);
   }
 }

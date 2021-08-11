@@ -49,6 +49,6 @@ public final class PageKey {
   public static int hashCode(final long fileId, final int pageIndex) {
     int result = (int) (fileId ^ (fileId >>> 32));
     result = 31 * result + pageIndex;
-    return result;
+    return (int) (result * -7046029254386353131L); // Fibonacci hashing
   }
 }
