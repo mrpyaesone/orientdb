@@ -241,7 +241,6 @@ public class BinaryBTreeTestIT {
       keys.add(key);
     }
 
-    final int rollbackInterval = 10;
     Iterator<byte[]> keysIterator = keys.iterator();
     while (keysIterator.hasNext()) {
       final byte[] key = keysIterator.next();
@@ -249,22 +248,6 @@ public class BinaryBTreeTestIT {
         atomicOperationsManager.executeInsideAtomicOperation(
             null, atomicOperation -> binaryBTree.remove(atomicOperation, key));
         keysIterator.remove();
-      }
-
-      try {
-        atomicOperationsManager.executeInsideAtomicOperation(
-            null,
-            atomicOperation -> {
-              int rollbackCounter = 0;
-              final Iterator<byte[]> keysDeletionIterator = keys.tailSet(key, false).iterator();
-              while (keysDeletionIterator.hasNext() && rollbackCounter < rollbackInterval) {
-                final byte[] keyToDelete = keysDeletionIterator.next();
-                rollbackCounter++;
-                binaryBTree.remove(atomicOperation, keyToDelete);
-              }
-              throw new RollbackException();
-            });
-      } catch (RollbackException ignore) {
       }
     }
 
@@ -308,7 +291,6 @@ public class BinaryBTreeTestIT {
 
     Iterator<byte[]> keysIterator = keys.iterator();
 
-    final int rollbackInterval = 10;
     while (keysIterator.hasNext()) {
       byte[] key = keysIterator.next();
 
@@ -316,21 +298,6 @@ public class BinaryBTreeTestIT {
         atomicOperationsManager.executeInsideAtomicOperation(
             null, atomicOperation -> binaryBTree.remove(atomicOperation, key));
         keysIterator.remove();
-      }
-      try {
-        atomicOperationsManager.executeInsideAtomicOperation(
-            null,
-            atomicOperation -> {
-              int rollbackCounter = 0;
-              final Iterator<byte[]> keysDeletionIterator = keys.tailSet(key, false).iterator();
-              while (keysDeletionIterator.hasNext() && rollbackCounter < rollbackInterval) {
-                byte[] keyToDelete = keysDeletionIterator.next();
-                rollbackCounter++;
-                binaryBTree.remove(atomicOperation, keyToDelete);
-              }
-              throw new RollbackException();
-            });
-      } catch (RollbackException ignore) {
       }
     }
     //    Assert.assertEquals(binaryBTree.firstKey(), keys.first());
@@ -359,10 +326,6 @@ public class BinaryBTreeTestIT {
                   atomicOperation,
                   Integer.toString(key).getBytes(StandardCharsets.UTF_8),
                   new ORecordId(key % 32000, key)));
-
-      Assert.assertEquals(
-          binaryBTree.get(Integer.toString(i).getBytes(StandardCharsets.UTF_8)),
-          new ORecordId(i % 32000, i));
     }
 
     for (int iterations = 0; iterations < 4; iterations++) {
@@ -389,12 +352,11 @@ public class BinaryBTreeTestIT {
         final int key = i + offset;
         atomicOperationsManager.executeInsideAtomicOperation(
             null,
-            atomicOperation -> {
-              Assert.assertEquals(
-                  binaryBTree.remove(
-                      atomicOperation, Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
-                  new ORecordId(key % 32000, key));
-            });
+            atomicOperation ->
+                Assert.assertEquals(
+                    binaryBTree.remove(
+                        atomicOperation, Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
+                    new ORecordId(key % 32000, key)));
       }
 
       final int start = (iterations + 1) * (keysCount / 2);
@@ -426,35 +388,26 @@ public class BinaryBTreeTestIT {
                   Integer.toString(k).getBytes(StandardCharsets.UTF_8),
                   new ORecordId(k % 32000, k)));
     }
-    final int rollbackInterval = 100;
 
-    for (int i = 0; i < keysCount / rollbackInterval; i++) {
-      for (int n = 0; n < 2; n++) {
-        final int rollbackCounter = n;
-        final int iterationsCounter = i;
+    final int txInterval = 100;
+    for (int i = 0; i < keysCount / txInterval; i++) {
+      final int iterationsCounter = i;
 
-        try {
-          atomicOperationsManager.executeInsideAtomicOperation(
-              null,
-              atomicOperation -> {
-                for (int j = 0; j < rollbackInterval; j++) {
-                  final int key = iterationsCounter * rollbackInterval + j;
-                  if (key % 3 == 0) {
-                    Assert.assertEquals(
-                        binaryBTree.remove(
-                            atomicOperation,
-                            Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
-                        new ORecordId(key % 32000, key));
-                  }
-                }
-                if (rollbackCounter == 0) {
-                  throw new RollbackException();
-                }
-              });
-        } catch (RollbackException ignore) {
-        }
-      }
+      atomicOperationsManager.executeInsideAtomicOperation(
+          null,
+          atomicOperation -> {
+            for (int j = 0; j < txInterval; j++) {
+              final int key = iterationsCounter * txInterval + j;
+              if (key % 3 == 0) {
+                Assert.assertEquals(
+                    binaryBTree.remove(
+                        atomicOperation, Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
+                    new ORecordId(key % 32000, key));
+              }
+            }
+          });
     }
+
     for (int i = 0; i < keysCount; i++) {
       if (i % 3 == 0) {
         Assert.assertNull(binaryBTree.get(Integer.toString(i).getBytes(StandardCharsets.UTF_8)));
@@ -484,42 +437,32 @@ public class BinaryBTreeTestIT {
           binaryBTree.get(Integer.toString(i).getBytes(StandardCharsets.UTF_8)),
           new ORecordId(i % 32000, i));
     }
-    final int rollbackInterval = 100;
+    final int txInterval = 100;
 
-    for (int i = 0; i < keysCount / rollbackInterval; i++) {
-      for (int n = 0; n < 2; n++) {
-        final int rollbackCounter = n;
-        final int iterationsCounter = i;
+    for (int i = 0; i < keysCount / txInterval; i++) {
+      final int iterationsCounter = i;
 
-        try {
-          atomicOperationsManager.executeInsideAtomicOperation(
-              null,
-              atomicOperation -> {
-                for (int j = 0; j < rollbackInterval; j++) {
-                  final int key = (iterationsCounter * rollbackInterval + j);
+      atomicOperationsManager.executeInsideAtomicOperation(
+          null,
+          atomicOperation -> {
+            for (int j = 0; j < txInterval; j++) {
+              final int key = (iterationsCounter * txInterval + j);
 
-                  if (key % 3 == 0) {
-                    Assert.assertEquals(
-                        binaryBTree.remove(
-                            atomicOperation,
-                            Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
-                        new ORecordId(key % 32000, key));
-                  }
+              if (key % 3 == 0) {
+                Assert.assertEquals(
+                    binaryBTree.remove(
+                        atomicOperation, Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
+                    new ORecordId(key % 32000, key));
+              }
 
-                  if (key % 2 == 0) {
-                    binaryBTree.put(
-                        atomicOperation,
-                        Integer.toString(keysCount + key).getBytes(StandardCharsets.UTF_8),
-                        new ORecordId((keysCount + key) % 32000, keysCount + key));
-                  }
-                }
-                if (rollbackCounter == 0) {
-                  throw new RollbackException();
-                }
-              });
-        } catch (RollbackException ignore) {
-        }
-      }
+              if (key % 2 == 0) {
+                binaryBTree.put(
+                    atomicOperation,
+                    Integer.toString(keysCount + key).getBytes(StandardCharsets.UTF_8),
+                    new ORecordId((keysCount + key) % 32000, keysCount + key));
+              }
+            }
+          });
     }
 
     for (int i = 0; i < keysCount; i++) {
@@ -544,7 +487,7 @@ public class BinaryBTreeTestIT {
     for (int iterations = 0; iterations < 4; iterations++) {
       System.out.println("testKeyAddDeleteAll : iteration " + iterations);
 
-      final int keysCount = 5_000_000;
+      final int keysCount = 1_000_000;
 
       for (int i = 0; i < keysCount; i++) {
         final int key = i;
@@ -555,10 +498,6 @@ public class BinaryBTreeTestIT {
                     atomicOperation,
                     Integer.toString(key).getBytes(StandardCharsets.UTF_8),
                     new ORecordId(key % 32000, key)));
-
-        Assert.assertEquals(
-            binaryBTree.get(Integer.toString(i).getBytes(StandardCharsets.UTF_8)),
-            new ORecordId(i % 32000, i));
       }
 
       for (int i = 0; i < keysCount; i++) {
@@ -570,8 +509,6 @@ public class BinaryBTreeTestIT {
                   binaryBTree.remove(
                       atomicOperation, Integer.toString(key).getBytes(StandardCharsets.UTF_8)),
                   new ORecordId(key % 32000, key));
-              Assert.assertNull(
-                  binaryBTree.get(Integer.toString(0).getBytes(StandardCharsets.UTF_8)));
 
               if (key > 0 && key % 100_000 == 0) {
                 for (int keyToVerify = 0; keyToVerify < keysCount; keyToVerify++) {

@@ -123,8 +123,6 @@ public final class BinaryBTree extends ODurableComponent {
         final Bucket keyBucket = new Bucket(bucketEntry);
         final int index = keyBucket.find(key);
 
-        assert depth <= 1 || !keyBucket.isEmpty();
-
         if (keyBucket.isLeaf()) {
           return new BucketSearchResult(index, pageIndex);
         }
@@ -582,8 +580,6 @@ public final class BinaryBTree extends ODurableComponent {
       final OCacheEntry bucketEntry = loadPageForRead(atomicOperation, fileId, pageIndex, false);
       try {
         final Bucket keyBucket = new Bucket(bucketEntry);
-        assert path.size() <= 1 || !keyBucket.isEmpty();
-
         final int index = keyBucket.find(key);
 
         if (keyBucket.isLeaf()) {
@@ -708,7 +704,7 @@ public final class BinaryBTree extends ODurableComponent {
                 removedValue = new ORecordId(clusterId, clusterPosition);
 
                 // skip balancing of the tree if leaf is a root.
-                if (bucketSize == 0 && removeSearchResult.path.size() > 1) {
+                if (bucketSize == 0 && removeSearchResult.path.size() > 0) {
                   if (balanceLeafNodeAfterItemDelete(
                       atomicOperation, removeSearchResult, keyBucket)) {
                     addToFreeList(atomicOperation, (int) removeSearchResult.leafPageIndex);
@@ -748,15 +744,30 @@ public final class BinaryBTree extends ODurableComponent {
             loadPageForWrite(atomicOperation, fileId, rightSiblingPageIndex, true, true);
         try {
           final Bucket rightSiblingBucket = new Bucket(rightSiblingEntry);
-          assert rightSiblingBucket.size() > 0;
+          final boolean deletionSuccessful =
+              deleteFromNonLeafNode(
+                  atomicOperation, parentBucket, rightSiblingBucket, removeSearchResult.path);
 
-          final long leftSibling = keyBucket.getLeftSibling();
-          assert rightSiblingBucket.getLeftSibling() == keyBucket.getCacheEntry().getPageIndex();
+          if (deletionSuccessful) {
+            final long leftSiblingIndex = keyBucket.getLeftSibling();
+            assert rightSiblingBucket.getLeftSibling() == keyBucket.getCacheEntry().getPageIndex();
 
-          rightSiblingBucket.setLeftSibling(leftSibling);
+            rightSiblingBucket.setLeftSibling(leftSiblingIndex);
 
-          return deleteFromNonLeafNode(
-              atomicOperation, parentBucket, rightSiblingBucket, removeSearchResult.path);
+            if (leftSiblingIndex > 0) {
+              final OCacheEntry leftSiblingEntry =
+                  loadPageForWrite(atomicOperation, fileId, leftSiblingIndex, true, true);
+              try {
+                final Bucket leftSiblingBucket = new Bucket(leftSiblingEntry);
+
+                leftSiblingBucket.setRightSibling(rightSiblingPageIndex);
+              } finally {
+                releasePageFromWrite(atomicOperation, leftSiblingEntry);
+              }
+            }
+          }
+
+          return deletionSuccessful;
         } finally {
           releasePageFromWrite(atomicOperation, rightSiblingEntry);
         }
@@ -768,15 +779,27 @@ public final class BinaryBTree extends ODurableComponent {
       try {
         // merge with right sibling
         final Bucket leftSiblingBucket = new Bucket(leftSiblingEntry);
+        final boolean deletionSuccessful =
+            deleteFromNonLeafNode(
+                atomicOperation, parentBucket, leftSiblingBucket, removeSearchResult.path);
 
-        assert leftSiblingBucket.size() > 0;
         final long rightSiblingIndex = keyBucket.getRightSibling();
 
         assert leftSiblingBucket.getRightSibling() == keyBucket.getCacheEntry().getPageIndex();
         leftSiblingBucket.setRightSibling(rightSiblingIndex);
 
-        return deleteFromNonLeafNode(
-            atomicOperation, parentBucket, leftSiblingBucket, removeSearchResult.path);
+        if (rightSiblingIndex > 0) {
+          final OCacheEntry rightSiblingEntry =
+              loadPageForWrite(atomicOperation, fileId, rightSiblingIndex, true, true);
+          try {
+            final Bucket rightSibling = new Bucket(rightSiblingEntry);
+            rightSibling.setLeftSibling(leftSiblingPageIndex);
+          } finally {
+            releasePageFromWrite(atomicOperation, rightSiblingEntry);
+          }
+        }
+
+        return deletionSuccessful;
       } finally {
         releasePageFromWrite(atomicOperation, leftSiblingEntry);
       }
@@ -826,6 +849,7 @@ public final class BinaryBTree extends ODurableComponent {
     }
 
     if (bucketSize > 1) {
+      bucket.removeNonLeafEntry(currentItem.indexInsidePage, currentItem.leftChild);
       return true;
     }
 
@@ -843,20 +867,18 @@ public final class BinaryBTree extends ODurableComponent {
         orphanPointer = bucket.getLeft(currentItem.indexInsidePage);
       }
 
-      bucket.removeNonLeafEntry(currentItem.indexInsidePage, currentItem.leftChild);
-
       if (parentItem.leftChild) {
         final int rightSiblingPageIndex = parentBucket.getRight(parentItem.indexInsidePage);
         final OCacheEntry rightSiblingEntry =
             loadPageForWrite(atomicOperation, fileId, rightSiblingPageIndex, true, true);
         try {
           final Bucket rightSiblingBucket = new Bucket(rightSiblingEntry);
-          assert rightSiblingBucket.size() > 0;
 
-          if (rightSiblingBucket.size() > 1) {
+          final int rightSiblingBucketSize = rightSiblingBucket.size();
+          if (rightSiblingBucketSize > 1) {
             return rotateNoneLeafLeftAndRemoveItem(
                 parentItem, parentBucket, bucket, rightSiblingBucket, orphanPointer);
-          } else {
+          } else if (rightSiblingBucketSize == 1) {
             return mergeNoneLeafWithRightSiblingAndDeleteItem(
                 atomicOperation,
                 parentItem,
@@ -866,6 +888,7 @@ public final class BinaryBTree extends ODurableComponent {
                 orphanPointer,
                 path);
           }
+          return false;
         } finally {
           releasePageFromWrite(atomicOperation, rightSiblingEntry);
         }
@@ -878,10 +901,11 @@ public final class BinaryBTree extends ODurableComponent {
           final Bucket leftSiblingBucket = new Bucket(leftSiblingEntry);
           assert leftSiblingBucket.size() > 0;
 
-          if (leftSiblingBucket.size() > 1) {
+          final int leftSiblingBucketSize = leftSiblingBucket.size();
+          if (leftSiblingBucketSize > 1) {
             return rotateNoneLeafRightAndRemoveItem(
                 parentItem, parentBucket, bucket, leftSiblingBucket, orphanPointer);
-          } else {
+          } else if (leftSiblingBucketSize == 1) {
             return mergeNoneLeafWithLeftSiblingAndDeleteItem(
                 atomicOperation,
                 parentItem,
@@ -891,6 +915,8 @@ public final class BinaryBTree extends ODurableComponent {
                 orphanPointer,
                 path);
           }
+
+          return false;
         } finally {
           releasePageFromWrite(atomicOperation, leftSiblingEntry);
         }
@@ -945,6 +971,8 @@ public final class BinaryBTree extends ODurableComponent {
     }
 
     final int bucketRight = rightSibling.getLeft(0);
+
+    bucket.removeNonLeafEntry(0, true);
     final boolean result = bucket.addNonLeafEntry(0, orphanPointer, bucketRight, bucketKey);
     assert result;
 
@@ -1054,7 +1082,6 @@ public final class BinaryBTree extends ODurableComponent {
       try {
         final Bucket bucket = new Bucket(bucketEntry);
 
-        assert depth <= 1 || !bucket.isEmpty();
         final int index = bucket.find(key);
 
         if (bucket.isLeaf()) {

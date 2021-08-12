@@ -405,6 +405,7 @@ public final class Bucket extends ODurablePage {
 
       for (int i = 0; i < size; i++) {
         if (i == entryIndex) {
+          currentPositionOffset += OIntegerSerializer.INT_SIZE;
           continue;
         }
 
