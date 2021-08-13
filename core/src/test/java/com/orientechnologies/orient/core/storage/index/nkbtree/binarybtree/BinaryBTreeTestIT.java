@@ -6,6 +6,7 @@ import com.orientechnologies.common.exception.OHighLevelException;
 import com.orientechnologies.common.io.OFileUtils;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.*;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.storage.impl.local.OAbstractPaginatedStorage;
 import com.orientechnologies.orient.core.storage.impl.local.paginated.atomicoperations.OAtomicOperationsManager;
@@ -15,11 +16,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
-import java.util.NavigableSet;
-import java.util.Random;
-import java.util.TreeSet;
+import java.util.*;
 
 public class BinaryBTreeTestIT {
   private OAtomicOperationsManager atomicOperationsManager;
@@ -532,6 +531,115 @@ public class BinaryBTreeTestIT {
 
       binaryBTree.assertFreePages();
     }
+  }
+
+  @Test
+  public void testRandomOperations() throws IOException {
+    final int maximumKeys = 1_000_000;
+    final int operations = 10 * maximumKeys;
+
+    final TreeMap<byte[], ORID> keyMap =
+        new TreeMap<>(OComparatorFactory.INSTANCE.getComparator(byte[].class));
+
+    final long seed = System.nanoTime();
+    final Random random = new Random(seed);
+
+    System.out.println("testRandomOperations : seed " + seed);
+    boolean growInSize = true;
+
+    for (int i = 0; i < operations; i++) {
+      final Operation operation;
+
+      if (!keyMap.isEmpty()) {
+        if (keyMap.size() >= maximumKeys) {
+          operation = Operation.DELETE;
+          growInSize = false;
+        } else if (growInSize) {
+          if (keyMap.size() > 0.8 * maximumKeys) {
+            growInSize = false;
+          }
+
+          if (random.nextDouble() < 0.8) {
+            operation = Operation.INSERT;
+          } else {
+            operation = Operation.DELETE;
+          }
+        } else {
+          if (random.nextDouble() < 0.8) {
+            operation = Operation.DELETE;
+          } else {
+            operation = Operation.INSERT;
+          }
+        }
+      } else {
+        operation = Operation.INSERT;
+        growInSize = true;
+      }
+
+      final int keySize = random.nextInt(10) + 5;
+      final byte[] key = new byte[keySize];
+      random.nextBytes(key);
+
+      if (operation == Operation.INSERT) {
+        final ORID value = new ORecordId(i % 32000, i);
+
+        keyMap.put(key, value);
+        atomicOperationsManager.executeInsideAtomicOperation(
+            null, atomicOperation -> binaryBTree.put(atomicOperation, key, value));
+      } else {
+        final int deletionKeySize = random.nextInt(10) + 5;
+        final byte[] deletionCandidate = new byte[deletionKeySize];
+        random.nextBytes(deletionCandidate);
+
+        byte[] deletionKey = keyMap.floorKey(deletionCandidate);
+        if (deletionKey == null) {
+          deletionKey = keyMap.lastKey();
+        }
+
+        final ORID expectedRemovedValue = keyMap.remove(deletionKey);
+
+        final byte[] dKey = deletionKey;
+        final ORID removedValue =
+            atomicOperationsManager.calculateInsideAtomicOperation(
+                null, atomicOperation -> binaryBTree.remove(atomicOperation, dKey));
+        Assert.assertEquals(expectedRemovedValue, removedValue);
+      }
+
+      if ((i + 1) % 100_000 == 0) {
+        System.out.printf("%,d operations are processed out of %,d%n", i + 1, operations);
+      }
+    }
+
+    System.out.println("Checking tree consistency");
+    for (final Map.Entry<byte[], ORID> entry : keyMap.entrySet()) {
+      final byte[] key = entry.getKey();
+      final ORID expectedValue = entry.getValue();
+
+      final ORID value = binaryBTree.get(key);
+      Assert.assertEquals(expectedValue, value);
+    }
+
+    binaryBTree.assertFreePages();
+
+    System.out.println("Remove all keys");
+
+    final int mapSize = keyMap.size();
+    int counter = 0;
+    for (final byte[] key : keyMap.keySet()) {
+      atomicOperationsManager.executeInsideAtomicOperation(
+          null, atomicOperation -> binaryBTree.remove(atomicOperation, key));
+      counter++;
+      if (counter % 100_000 == 0) {
+        System.out.printf("%,d keys are removed out ouf %,d%n", counter, mapSize);
+      }
+    }
+
+    binaryBTree.assertFreePages();
+  }
+
+  enum Operation {
+    INSERT,
+    DELETE
   }
 
   static final class RollbackException extends OException implements OHighLevelException {

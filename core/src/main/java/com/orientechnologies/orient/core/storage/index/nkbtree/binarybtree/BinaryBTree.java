@@ -933,8 +933,9 @@ public final class BinaryBTree extends ODurableComponent {
       final Bucket bucket,
       final Bucket leftSibling,
       final int orhanPointer) {
-    assert bucket.size() == 1;
-    assert leftSibling.size() > 1;
+    if (bucket.size() != 1 || leftSibling.size() <= 1) {
+      throw new BinaryBTreeException("BTree is broken", this);
+    }
 
     final byte[] bucketKey = parentBucket.getKey(parentItem.indexInsidePage);
     final int leftSiblingSize = leftSibling.size();
@@ -959,8 +960,9 @@ public final class BinaryBTree extends ODurableComponent {
       final Bucket bucket,
       final Bucket rightSibling,
       final int orphanPointer) {
-    assert bucket.size() == 1;
-    assert rightSibling.size() > 1;
+    if (bucket.size() != 1 || rightSibling.size() <= 1) {
+      throw new BinaryBTreeException("BTree is broken", this);
+    }
 
     final byte[] bucketKey = parentBucket.getKey(parentItem.indexInsidePage);
 
@@ -990,8 +992,9 @@ public final class BinaryBTree extends ODurableComponent {
       final List<RemovalPathItem> path)
       throws IOException {
 
-    assert rightSibling.size() == 1;
-    assert bucket.size() == 1;
+    if (rightSibling.size() != 1 || bucket.size() != 1) {
+      throw new BinaryBTreeException("BTree is broken", this);
+    }
 
     final byte[] leftKey = parentBucket.getKey(parentItem.indexInsidePage);
     final int rightChild = rightSibling.getLeft(0);
@@ -1020,8 +1023,9 @@ public final class BinaryBTree extends ODurableComponent {
       final List<RemovalPathItem> path)
       throws IOException {
 
-    assert leftSibling.size() == 1;
-    assert bucket.size() == 1;
+    if (leftSibling.size() != 1 || bucket.size() != 1) {
+      throw new BinaryBTreeException("BTree is broken", this);
+    }
 
     final byte[] rightKey = parentBucket.getKey(parentItem.indexInsidePage);
     final int leftChild = leftSibling.getRight(0);
